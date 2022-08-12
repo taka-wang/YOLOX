@@ -12,7 +12,8 @@ from torch import nn
 from yolox.exp import get_exp
 from yolox.models.network_blocks import SiLU
 from yolox.utils import replace_module
-
+from utils import select_device
+from experimental import End2End
 
 def make_parser():
     parser = argparse.ArgumentParser("YOLOX onnx deploy")
@@ -54,6 +55,12 @@ def make_parser():
         action="store_true",
         help="decode in inference or not"
     )
+    parser.add_argument('--end2end', action='store_true', help='export end2end onnx')
+    parser.add_argument('--max-wh', type=int, default=None, help='None for tensorrt nms, int value for onnx-runtime nms')
+    parser.add_argument('--topk-all', type=int, default=100, help='topk objects for every images')
+    parser.add_argument('--iou-thres', type=float, default=0.45, help='iou threshold for NMS')
+    parser.add_argument('--conf-thres', type=float, default=0.25, help='conf threshold for NMS')
+    parser.add_argument('--device', default='cpu', help='cuda device, i.e. 0 or 0,1,2,3 or cpu')
 
     return parser
 
@@ -84,16 +91,32 @@ def main():
     model.load_state_dict(ckpt)
     model = replace_module(model, nn.SiLU, SiLU)
     model.head.decode_in_inference = args.decode_in_inference
+    
+    device = select_device(args.device)
+    
+    if args.end2end:
+        print('\nStarting export end2end onnx model for %s...' % 'TensorRT' if args.max_wh is None else 'onnxruntime')
+        model = End2End(model, args.topk_all, args.iou_thres, args.conf_thres, args.max_wh, device)
+        if args.end2end and args.max_wh is None:
+            output_names = ['num_dets', 'det_boxes', 'det_scores', 'det_classes']
+            shapes = [args.batch_size, 1, args.batch_size, args.topk_all, 4,
+                        args.batch_size, args.topk_all, args.batch_size, args.topk_all]
+        else:
+            output_names = ['output']
+    else:
+        #model.model[-1].concat = True
+        output_names = ['output']
 
     logger.info("loading checkpoint done.")
     dummy_input = torch.randn(args.batch_size, 3, exp.test_size[0], exp.test_size[1])
 
-    torch.onnx._export(
+    torch.onnx.export(
         model,
         dummy_input,
         args.output_name,
+        #verbose=True,
         input_names=[args.input],
-        output_names=[args.output],
+        output_names=output_names,
         dynamic_axes={args.input: {0: 'batch'},
                       args.output: {0: 'batch'}} if args.dynamic else None,
         opset_version=args.opset,
