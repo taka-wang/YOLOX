@@ -203,14 +203,16 @@ class YOLOXHead(nn.Module):
                 dtype=xin[0].dtype,
             )
         else:
-            self.hw = [x.shape[-2:] for x in outputs]
+            self.hw = [list(map(int, x.shape[-2:])) for x in outputs]
             # [batch, n_anchors_all, 85]
             # outputs = torch.cat(
             #     [x.flatten(start_dim=2) for x in outputs], dim=2
             # ).permute(0, 2, 1)
+            proc_view = lambda x: x.view(-1, int(x.size(1)), int(x.size(2) * x.size(3)))
             outputs = torch.cat(
-                [x.view(-1,int(x.size(1)),int(x.size(2)*x.size(3))) for x in outputs], dim=2
+                [proc_view(x) for x in outputs], dim=2
             ).permute(0, 2, 1)
+            
             if self.decode_in_inference:
                 return self.decode_outputs(outputs, dtype=xin[0].type())
             else:
@@ -252,7 +254,7 @@ class YOLOXHead(nn.Module):
         # outputs[..., :2] = (outputs[..., :2] + grids) * strides
         # outputs[..., 2:4] = torch.exp(outputs[..., 2:4]) * strides
         # return outputs
-        xy =  (outputs[..., :2] + grids) * strides
+        xy = (outputs[..., :2] + grids) * strides
         wh = torch.exp(outputs[..., 2:4]) * strides
         return torch.cat((xy, wh, outputs[..., 4:]), dim=-1)
 
